@@ -461,3 +461,90 @@ exports.getSalesTrend = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// Análisis de precios
+exports.analyzePricing = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        
+        const pricingAnalysis = products.map(product => {
+            const profit = product.salePrice - product.purchasePrice;
+            const margin = ((profit / product.purchasePrice) * 100).toFixed(2);
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                purchasePrice: product.purchasePrice,
+                salePrice: product.salePrice,
+                profit,
+                margin: `${margin}%`,
+                competitiveness: margin > 50 ? 'Alta' : margin > 25 ? 'Media' : 'Baja'
+            };
+        });
+        
+        const avgMargin = pricingAnalysis.reduce((sum, p) => sum + parseFloat(p.margin), 0) / pricingAnalysis.length;
+        
+        res.json({
+            totalProducts: pricingAnalysis.length,
+            averageMargin: `${avgMargin.toFixed(2)}%`,
+            products: pricingAnalysis.sort((a, b) => parseFloat(b.margin) - parseFloat(a.margin))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Simulaciones
+exports.simulatePriceChange = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { newPrice, percentage } = req.body;
+        
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        
+        let simulatedPrice;
+        if (newPrice) {
+            simulatedPrice = newPrice;
+        } else if (percentage) {
+            simulatedPrice = product.salePrice * (1 + percentage / 100);
+        } else {
+            return res.status(400).json({ error: 'Debe proporcionar newPrice o percentage' });
+        }
+        
+        const currentProfit = product.salePrice - product.purchasePrice;
+        const currentMargin = ((currentProfit / product.purchasePrice) * 100).toFixed(2);
+        
+        const newProfit = simulatedPrice - product.purchasePrice;
+        const newMargin = ((newProfit / product.purchasePrice) * 100).toFixed(2);
+        
+        const profitDifference = newProfit - currentProfit;
+        const marginDifference = (newMargin - currentMargin).toFixed(2);
+        
+        res.json({
+            productId,
+            productName: product.name,
+            current: {
+                price: product.salePrice,
+                profit: currentProfit,
+                margin: `${currentMargin}%`
+            },
+            simulated: {
+                price: simulatedPrice,
+                profit: newProfit,
+                margin: `${newMargin}%`
+            },
+            impact: {
+                profitDifference,
+                marginDifference: `${marginDifference}%`,
+                stockValue: simulatedPrice * product.stock,
+                potentialRevenue: newProfit * product.stock
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};

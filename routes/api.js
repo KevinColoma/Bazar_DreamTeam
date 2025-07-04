@@ -71,4 +71,14 @@ router.get('/business/sales/top-products', businessRulesController.getTopSelling
 router.get('/business/sales/trend', businessRulesController.getSalesTrend);
 router.get('/business/sales/roi', businessRulesController.calculateROI);
 
+// 3. Análisis de clientes
+router.get('/business/clients/:clientId/value', businessRulesController.calculateClientValue);
+router.get('/business/clients/:clientId/predict-purchase', businessRulesController.predictNextPurchase);
+
+// 4. Análisis de categorías
+router.get('/business/categories/performance', businessRulesController.getCategoryPerformance);
+
+// 5. Análisis de precios
+router.get('/business/pricing/analysis', businessRulesController.analyzePricing);
+router.post('/business/products/:productId/simulate-price', businessRulesController.simulatePriceChange);
 module.exports = router;
