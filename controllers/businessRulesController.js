@@ -777,3 +777,57 @@ exports.getInventoryEfficiency = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+// Predicción de demanda
+exports.predictDemand = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { days = 30 } = req.query;
+        
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        
+        const pastDays = parseInt(days) * 3; // Analizar el triple del período para predicción
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - pastDays);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        let totalSold = 0;
+        let salesDays = 0;
+        
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                if (item.productId.toString() === productId) {
+                    totalSold += item.quantity;
+                    salesDays++;
+                }
+            });
+        });
+        
+        const averageDailySales = totalSold / pastDays;
+        const predictedDemand = Math.ceil(averageDailySales * parseInt(days));
+        const restockNeeded = Math.max(0, predictedDemand - product.stock);
+        
+        res.json({
+            productId,
+            productName: product.name,
+            analysisPeriod: `${pastDays} días`,
+            predictionPeriod: `${days} días`,
+            currentStock: product.stock,
+            totalSoldInAnalysis: totalSold,
+            averageDailySales: averageDailySales.toFixed(2),
+            predictedDemand,
+            restockNeeded,
+            restockCost: restockNeeded * product.purchasePrice,
+            stockoutRisk: product.stock < predictedDemand ? 'Alto' : 'Bajo'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
