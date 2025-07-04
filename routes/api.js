@@ -136,7 +136,21 @@ router.get('/business/sales/purchase-patterns', businessRulesController.getPurch
 router.get('/business/customers/retention-analysis', businessRulesController.getCustomerRetentionAnalysis);
 
 
+// 19. Comparación de performance de productos
+router.get('/business/products/performance-comparison', businessRulesController.getProductPerformanceComparison);
 
+// 20. Análisis de margen por categoría
+router.get('/business/categories/margin-analysis', businessRulesController.getCategoryMarginAnalysis);
+
+// 21. Análisis de velocidad de venta
+router.get('/business/sales/velocity-analysis', businessRulesController.getSalesVelocityAnalysis);
+
+// 22. Análisis de punto de equilibrio
+router.get('/business/financial/break-even-analysis', businessRulesController.getBreakEvenAnalysis);
+
+// 23. Análisis de estacionalidad avanzado
+router.get('/business/analysis/advanced-seasonality', businessRulesController.getAdvancedSeasonalityAnalysis);
+ 
 
 
 
