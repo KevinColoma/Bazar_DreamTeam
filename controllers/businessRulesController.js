@@ -831,3 +831,83 @@ exports.predictDemand = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+
+
+// Análisis ABC de productos
+exports.getABCAnalysis = async (req, res) => {
+    try {
+        const { days = 90 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        const products = await Product.find();
+        
+        const productRevenue = {};
+        
+        // Calcular ingresos por producto
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                const productId = item.productId.toString();
+                if (!productRevenue[productId]) {
+                    productRevenue[productId] = {
+                        productId,
+                        name: item.name,
+                        revenue: 0,
+                        quantity: 0
+                    };
+                }
+                productRevenue[productId].revenue += item.total;
+                productRevenue[productId].quantity += item.quantity;
+            });
+        });
+        
+        const productArray = Object.values(productRevenue).sort((a, b) => b.revenue - a.revenue);
+        const totalRevenue = productArray.reduce((sum, p) => sum + p.revenue, 0);
+        
+        let cumulativeRevenue = 0;
+        const abcAnalysis = productArray.map((product, index) => {
+            cumulativeRevenue += product.revenue;
+            const cumulativePercentage = (cumulativeRevenue / totalRevenue) * 100;
+            
+            let category;
+            if (cumulativePercentage <= 80) {
+                category = 'A';
+            } else if (cumulativePercentage <= 95) {
+                category = 'B';
+            } else {
+                category = 'C';
+            }
+            
+            return {
+                ...product,
+                rank: index + 1,
+                revenuePercentage: ((product.revenue / totalRevenue) * 100).toFixed(2),
+                cumulativePercentage: cumulativePercentage.toFixed(2),
+                category
+            };
+        });
+        
+        const summary = {
+            A: abcAnalysis.filter(p => p.category === 'A').length,
+            B: abcAnalysis.filter(p => p.category === 'B').length,
+            C: abcAnalysis.filter(p => p.category === 'C').length
+        };
+        
+        res.json({
+            period: `${days} días`,
+            totalProducts: productArray.length,
+            totalRevenue,
+            summary,
+            products: abcAnalysis
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
