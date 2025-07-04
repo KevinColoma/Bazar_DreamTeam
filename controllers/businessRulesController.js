@@ -163,3 +163,112 @@ exports.calculateProductRotation = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+// Cálculos de ventas
+exports.calculateSalesAnalytics = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        let dateFilter = {};
+        
+        if (startDate && endDate) {
+            dateFilter = {
+                date: {
+                    $gte: new Date(startDate),
+                    $lte: new Date(endDate)
+                }
+            };
+        }
+        
+        const sales = await Sale.find(dateFilter).populate('clientId');
+        
+        const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
+        const averageSale = sales.length > 0 ? (totalSales / sales.length).toFixed(2) : 0;
+        const uniqueClients = new Set(sales.map(sale => sale.clientId?._id)).size;
+        
+        res.json({
+            period: { startDate, endDate },
+            totalSales,
+            averageSale: parseFloat(averageSale),
+            salesCount: sales.length,
+            uniqueClients,
+            averagePerClient: uniqueClients > 0 ? (totalSales / uniqueClients).toFixed(2) : 0
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.getTopSellingProducts = async (req, res) => {
+    try {
+        const { limit = 10, days = 30 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        const productSales = {};
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                const productId = item.productId.toString();
+                if (!productSales[productId]) {
+                    productSales[productId] = {
+                        productId,
+                        name: item.name,
+                        quantitySold: 0,
+                        totalRevenue: 0
+                    };
+                }
+                productSales[productId].quantitySold += item.quantity;
+                productSales[productId].totalRevenue += item.total;
+            });
+        });
+        
+        const topProducts = Object.values(productSales)
+            .sort((a, b) => b.quantitySold - a.quantitySold)
+            .slice(0, parseInt(limit));
+        
+        res.json({
+            period: `${days} días`,
+            limit: parseInt(limit),
+            topProducts
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.calculateClientValue = async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const { months = 12 } = req.query;
+        
+        const client = await Client.findById(clientId);
+        if (!client) {
+            return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+        
+        const dateFrom = new Date();
+        dateFrom.setMonth(dateFrom.getMonth() - months);
+        
+        const sales = await Sale.find({
+            clientId,
+            date: { $gte: dateFrom }
+        });
+        
+        const totalPurchased = sales.reduce((sum, sale) => sum + sale.total, 0);
+        const averagePurchase = sales.length > 0 ? (totalPurchased / sales.length).toFixed(2) : 0;
+        const frequency = sales.length;
+        
+        res.json({
+            clientId,
+            clientName: client.fullname,
+            period: `${months} meses`,
+            totalPurchased,
+            averagePurchase: parseFloat(averagePurchase),
+            purchaseFrequency: frequency,
+            customerValue: (totalPurchased / months).toFixed(2)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};

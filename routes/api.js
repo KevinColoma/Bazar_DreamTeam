@@ -57,5 +57,18 @@ router.get('/sales/:id', saleController.getSaleById);
 router.post('/sales', saleController.createSale);
 router.put('/sales/:id', saleController.updateSale);
 router.delete('/sales/:id', saleController.deleteSale);
+// ===== REGLAS DE NEGOCIO  =====
+
+// 1. Análisis de productos
+router.get('/business/products/:productId/profit', businessRulesController.calculateProductProfit);
+router.get('/business/inventory/value', businessRulesController.calculateInventoryValue);
+router.get('/business/products/profit-margin', businessRulesController.getProductsByProfitMargin);
+router.get('/business/products/low-stock', businessRulesController.getLowStockProducts);
+router.get('/business/products/:productId/rotation', businessRulesController.calculateProductRotation);
+// 2. Análisis de ventas
+router.get('/business/sales/analytics', businessRulesController.calculateSalesAnalytics);
+router.get('/business/sales/top-products', businessRulesController.getTopSellingProducts);
+router.get('/business/sales/trend', businessRulesController.getSalesTrend);
+router.get('/business/sales/roi', businessRulesController.calculateROI);
 
 module.exports = router;
