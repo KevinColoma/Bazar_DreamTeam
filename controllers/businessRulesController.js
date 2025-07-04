@@ -1628,3 +1628,246 @@ exports.getCategoryMarginAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+  
+
+
+
+// Análisis de velocidad de venta
+exports.getSalesVelocityAnalysis = async (req, res) => {
+    try {
+        const { days = 30 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const products = await Product.find().populate('categoryId');
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        const velocityAnalysis = products.map(product => {
+            let totalSold = 0;
+            let lastSaleDate = null;
+            
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        totalSold += item.quantity;
+                        if (!lastSaleDate || sale.date > lastSaleDate) {
+                            lastSaleDate = sale.date;
+                        }
+                    }
+                });
+            });
+            
+            const dailyVelocity = totalSold / parseInt(days);
+            const daysSinceLastSale = lastSaleDate ? 
+                Math.floor((new Date() - lastSaleDate) / (1000 * 60 * 60 * 24)) : null;
+            
+            let velocityCategory;
+            if (dailyVelocity >= 5) velocityCategory = 'Muy rápida';
+            else if (dailyVelocity >= 2) velocityCategory = 'Rápida';
+            else if (dailyVelocity >= 0.5) velocityCategory = 'Moderada';
+            else if (dailyVelocity > 0) velocityCategory = 'Lenta';
+            else velocityCategory = 'Sin movimiento';
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                currentStock: product.stock,
+                totalSold,
+                dailyVelocity: dailyVelocity.toFixed(2),
+                daysSinceLastSale,
+                velocityCategory,
+                daysToStockout: dailyVelocity > 0 ? Math.ceil(product.stock / dailyVelocity) : 'N/A',
+                restockUrgency: dailyVelocity > 0 && (product.stock / dailyVelocity) < 7 ? 'Urgente' : 'Normal'
+            };
+        });
+        
+        const velocitySummary = {
+            'Muy rápida': velocityAnalysis.filter(p => p.velocityCategory === 'Muy rápida').length,
+            'Rápida': velocityAnalysis.filter(p => p.velocityCategory === 'Rápida').length,
+            'Moderada': velocityAnalysis.filter(p => p.velocityCategory === 'Moderada').length,
+            'Lenta': velocityAnalysis.filter(p => p.velocityCategory === 'Lenta').length,
+            'Sin movimiento': velocityAnalysis.filter(p => p.velocityCategory === 'Sin movimiento').length
+        };
+        
+        res.json({
+            period: `${days} días`,
+            totalProducts: velocityAnalysis.length,
+            velocitySummary,
+            urgentRestockNeeded: velocityAnalysis.filter(p => p.restockUrgency === 'Urgente').length,
+            products: velocityAnalysis.sort((a, b) => parseFloat(b.dailyVelocity) - parseFloat(a.dailyVelocity))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de punto de equilibrio
+exports.getBreakEvenAnalysis = async (req, res) => {
+    try {
+        const { fixedCosts = 0 } = req.query;
+        const products = await Product.find().populate('categoryId');
+        
+        const breakEvenAnalysis = products.map(product => {
+            const unitMargin = product.salePrice - product.purchasePrice;
+            const marginPercentage = ((unitMargin / product.salePrice) * 100).toFixed(2);
+            
+            // Calcular punto de equilibrio básico (sin costos fijos)
+            const basicBreakEven = unitMargin > 0 ? 1 : 'N/A';
+            
+            // Calcular punto de equilibrio con costos fijos distribuidos
+            const allocatedFixedCost = parseFloat(fixedCosts) / products.length;
+            const breakEvenWithFixed = unitMargin > 0 ? 
+                Math.ceil(allocatedFixedCost / unitMargin) : 'N/A';
+            
+            // Análisis de sensibilidad
+            const scenarios = [
+                { priceChange: -5, newPrice: product.salePrice * 0.95 },
+                { priceChange: 0, newPrice: product.salePrice },
+                { priceChange: 5, newPrice: product.salePrice * 1.05 },
+                { priceChange: 10, newPrice: product.salePrice * 1.1 }
+            ].map(scenario => {
+                const newMargin = scenario.newPrice - product.purchasePrice;
+                const newBreakEven = newMargin > 0 ? Math.ceil(allocatedFixedCost / newMargin) : 'N/A';
+                
+                return {
+                    priceChange: scenario.priceChange + '%',
+                    newPrice: scenario.newPrice.toFixed(2),
+                    newMargin: newMargin.toFixed(2),
+                    breakEvenUnits: newBreakEven
+                };
+            });
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                currentPrice: product.salePrice,
+                unitCost: product.purchasePrice,
+                unitMargin,
+                marginPercentage: marginPercentage + '%',
+                basicBreakEven,
+                breakEvenWithFixed,
+                currentStock: product.stock,
+                stockValue: product.stock * product.purchasePrice,
+                scenarios
+            };
+        });
+        
+        res.json({
+            fixedCostsConsidered: parseFloat(fixedCosts),
+            totalProducts: breakEvenAnalysis.length,
+            summary: {
+                averageMargin: (breakEvenAnalysis.reduce((sum, p) => sum + p.unitMargin, 0) / products.length).toFixed(2),
+                profitableProducts: breakEvenAnalysis.filter(p => p.unitMargin > 0).length,
+                highMarginProducts: breakEvenAnalysis.filter(p => parseFloat(p.marginPercentage) > 40).length
+            },
+            products: breakEvenAnalysis.sort((a, b) => b.unitMargin - a.unitMargin)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de estacionalidad avanzado
+exports.getAdvancedSeasonalityAnalysis = async (req, res) => {
+    try {
+        const { productId, categoryId } = req.query;
+        
+        const currentYear = new Date().getFullYear();
+        const startDate = new Date(currentYear - 1, 0, 1);
+        const endDate = new Date(currentYear, 11, 31);
+        
+        let salesQuery = { date: { $gte: startDate, $lte: endDate } };
+        const sales = await Sale.find(salesQuery);
+        
+        let products = await Product.find().populate('categoryId');
+        if (productId) {
+            products = products.filter(p => p._id.toString() === productId);
+        } else if (categoryId) {
+            products = products.filter(p => p.categoryId && p.categoryId._id.toString() === categoryId);
+        }
+        
+        const seasonalData = products.map(product => {
+            const monthlyData = {};
+            for (let month = 0; month < 12; month++) {
+                monthlyData[month] = {
+                    month: month + 1,
+                    sales: 0,
+                    revenue: 0,
+                    avgPrice: 0
+                };
+            }
+            
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        const month = sale.date.getMonth();
+                        monthlyData[month].sales += item.quantity;
+                        monthlyData[month].revenue += item.total;
+                    }
+                });
+            });
+            
+            // Calcular precios promedio
+            Object.values(monthlyData).forEach(data => {
+                data.avgPrice = data.sales > 0 ? (data.revenue / data.sales).toFixed(2) : 0;
+            });
+            
+            // Identificar temporadas
+            const seasons = {
+                spring: [2, 3, 4], // Mar, Abr, May
+                summer: [5, 6, 7], // Jun, Jul, Ago
+                autumn: [8, 9, 10], // Sep, Oct, Nov
+                winter: [11, 0, 1] // Dic, Ene, Feb
+            };
+            
+            const seasonalSummary = {};
+            Object.keys(seasons).forEach(season => {
+                const seasonData = seasons[season].reduce((sum, month) => {
+                    return {
+                        sales: sum.sales + monthlyData[month].sales,
+                        revenue: sum.revenue + monthlyData[month].revenue
+                    };
+                }, { sales: 0, revenue: 0 });
+                
+                seasonalSummary[season] = {
+                    sales: seasonData.sales,
+                    revenue: seasonData.revenue,
+                    avgMonthly: (seasonData.sales / 3).toFixed(1)
+                };
+            });
+            
+            // Encontrar mejor y peor mes
+            const monthlyArray = Object.values(monthlyData);
+            const bestMonth = monthlyArray.reduce((max, month) => month.sales > max.sales ? month : max);
+            const worstMonth = monthlyArray.reduce((min, month) => month.sales < min.sales ? month : min);
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                monthlyData: Object.values(monthlyData),
+                seasonalSummary,
+                insights: {
+                    bestMonth: `Mes ${bestMonth.month} (${bestMonth.sales} unidades)`,
+                    worstMonth: `Mes ${worstMonth.month} (${worstMonth.sales} unidades)`,
+                    seasonality: 'Detectada', // Simplificado
+                    recommendation: bestMonth.sales > worstMonth.sales * 2 ? 
+                        'Producto estacional - planificar inventario' : 
+                        'Ventas relativamente estables'
+                }
+            };
+        });
+        
+        res.json({
+            period: `${currentYear - 1} - ${currentYear}`,
+            filters: { productId, categoryId },
+            productsAnalyzed: seasonalData.length,
+            analysis: seasonalData
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
