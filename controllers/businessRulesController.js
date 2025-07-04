@@ -547,4 +547,74 @@ exports.simulatePriceChange = async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+};  
+
+
+
+// Alertas y recomendaciones
+exports.getBusinessAlerts = async (req, res) => {
+    try {
+        const alerts = [];
+        
+        // Productos con bajo stock
+        const lowStockProducts = await Product.find({ stock: { $lte: 5 } });
+        if (lowStockProducts.length > 0) {
+            alerts.push({
+                type: 'LOW_STOCK',
+                severity: 'HIGH',
+                message: `${lowStockProducts.length} productos con stock crítico`,
+                details: lowStockProducts.map(p => ({ id: p._id, name: p.name, stock: p.stock }))
+            });
+        }
+        
+        // Productos sin ventas recientes
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const recentSales = await Sale.find({ date: { $gte: thirtyDaysAgo } });
+        const soldProductIds = new Set();
+        recentSales.forEach(sale => {
+            sale.items.forEach(item => {
+                soldProductIds.add(item.productId.toString());
+            });
+        });
+        
+        const allProducts = await Product.find();
+        const unsoldProducts = allProducts.filter(p => !soldProductIds.has(p._id.toString()));
+        
+        if (unsoldProducts.length > 0) {
+            alerts.push({
+                type: 'NO_SALES',
+                severity: 'MEDIUM',
+                message: `${unsoldProducts.length} productos sin ventas en 30 días`,
+                details: unsoldProducts.slice(0, 5).map(p => ({ id: p._id, name: p.name }))
+            });
+        }
+        
+        // Margen de ganancia bajo
+        const lowMarginProducts = allProducts.filter(product => {
+            const margin = ((product.salePrice - product.purchasePrice) / product.purchasePrice) * 100;
+            return margin < 20;
+        });
+        
+        if (lowMarginProducts.length > 0) {
+            alerts.push({
+                type: 'LOW_MARGIN',
+                severity: 'MEDIUM',
+                message: `${lowMarginProducts.length} productos con margen menor al 20%`,
+                details: lowMarginProducts.slice(0, 5).map(p => {
+                    const margin = ((p.salePrice - p.purchasePrice) / p.purchasePrice) * 100;
+                    return { id: p._id, name: p.name, margin: `${margin.toFixed(2)}%` };
+                })
+            });
+        }
+        
+        res.json({
+            timestamp: new Date(),
+            alertCount: alerts.length,
+            alerts
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 };
