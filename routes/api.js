@@ -8,6 +8,7 @@ const catalogController = require('../controllers/catalogController');
 const notificationController = require('../controllers/notificationController');
 const supplierController = require('../controllers/supplierController');
 const saleController = require('../controllers/saleController');
+const businessRulesController = require('../controllers/businessRulesController');
 
 // Categorías
 router.get('/categories', categoryController.getAllCategories);
@@ -82,3 +83,12 @@ router.get('/business/categories/performance', businessRulesController.getCatego
 router.get('/business/pricing/analysis', businessRulesController.analyzePricing);
 router.post('/business/products/:productId/simulate-price', businessRulesController.simulatePriceChange);
 module.exports = router;
+
+
+
+// 6. Alertas y recomendaciones
+router.get('/business/alerts', businessRulesController.getBusinessAlerts);
+router.get('/business/dashboard/summary', businessRulesController.getDashboardSummary);
+
+// 7. Análisis temporal
+router.get('/business/analysis/seasonal', businessRulesController.getSeasonalAnalysis);
