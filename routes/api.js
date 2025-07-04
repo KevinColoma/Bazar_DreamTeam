@@ -92,3 +92,23 @@ router.get('/business/dashboard/summary', businessRulesController.getDashboardSu
 
 // 7. Análisis temporal
 router.get('/business/analysis/seasonal', businessRulesController.getSeasonalAnalysis);
+
+
+
+// 8. Eficiencia de inventario
+router.get('/business/inventory/efficiency', businessRulesController.getInventoryEfficiency);
+
+// 9. Predicción de demanda
+router.get('/business/products/:productId/predict-demand', businessRulesController.predictDemand);
+
+
+
+
+
+
+
+
+
+
+
+
