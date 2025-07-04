@@ -1267,3 +1267,191 @@ exports.getPriceOptimizationAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+// Análisis de patrones de compra
+exports.getPurchasePatternAnalysis = async (req, res) => {
+    try {
+        const { days = 90 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        // Análisis por día de la semana
+        const dayOfWeekAnalysis = {
+            0: { day: 'Domingo', sales: 0, revenue: 0, avgOrder: 0 },
+            1: { day: 'Lunes', sales: 0, revenue: 0, avgOrder: 0 },
+            2: { day: 'Martes', sales: 0, revenue: 0, avgOrder: 0 },
+            3: { day: 'Miércoles', sales: 0, revenue: 0, avgOrder: 0 },
+            4: { day: 'Jueves', sales: 0, revenue: 0, avgOrder: 0 },
+            5: { day: 'Viernes', sales: 0, revenue: 0, avgOrder: 0 },
+            6: { day: 'Sábado', sales: 0, revenue: 0, avgOrder: 0 }
+        };
+        
+        // Análisis por hora
+        const hourAnalysis = {};
+        for (let i = 0; i < 24; i++) {
+            hourAnalysis[i] = { hour: i, sales: 0, revenue: 0 };
+        }
+        
+        sales.forEach(sale => {
+            const dayOfWeek = sale.date.getDay();
+            const hour = sale.date.getHours();
+            
+            dayOfWeekAnalysis[dayOfWeek].sales += 1;
+            dayOfWeekAnalysis[dayOfWeek].revenue += sale.total;
+            
+            hourAnalysis[hour].sales += 1;
+            hourAnalysis[hour].revenue += sale.total;
+        });
+        
+        // Calcular promedios
+        Object.values(dayOfWeekAnalysis).forEach(day => {
+            day.avgOrder = day.sales > 0 ? (day.revenue / day.sales).toFixed(2) : 0;
+        });
+        
+        // Encontrar mejores y peores días/horas
+        const bestDay = Object.values(dayOfWeekAnalysis).reduce((max, day) => 
+            day.revenue > max.revenue ? day : max);
+        const worstDay = Object.values(dayOfWeekAnalysis).reduce((min, day) => 
+            day.revenue < min.revenue ? day : min);
+        
+        const bestHour = Object.values(hourAnalysis).reduce((max, hour) => 
+            hour.revenue > max.revenue ? hour : max);
+        const worstHour = Object.values(hourAnalysis).reduce((min, hour) => 
+            hour.revenue < min.revenue ? hour : min);
+        
+        res.json({
+            period: `${days} días`,
+            totalSales: sales.length,
+            totalRevenue: sales.reduce((sum, sale) => sum + sale.total, 0),
+            patterns: {
+                byDayOfWeek: Object.values(dayOfWeekAnalysis),
+                byHour: Object.values(hourAnalysis),
+                insights: {
+                    bestDay: bestDay.day,
+                    worstDay: worstDay.day,
+                    bestHour: `${bestHour.hour}:00`,
+                    worstHour: `${worstHour.hour}:00`,
+                    weekendVsWeekday: {
+                        weekend: dayOfWeekAnalysis[0].revenue + dayOfWeekAnalysis[6].revenue,
+                        weekday: Object.keys(dayOfWeekAnalysis)
+                            .filter(day => day != 0 && day != 6)
+                            .reduce((sum, day) => sum + dayOfWeekAnalysis[day].revenue, 0)
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de retention de clientes
+exports.getCustomerRetentionAnalysis = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        
+        let dateFilter = {};
+        if (startDate && endDate) {
+            dateFilter = {
+                date: {
+                    $gte: new Date(startDate),
+                    $lte: new Date(endDate)
+                }
+            };
+        } else {
+            // Por defecto, últimos 12 meses
+            const twelveMonthsAgo = new Date();
+            twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+            dateFilter = { date: { $gte: twelveMonthsAgo } };
+        }
+        
+        const sales = await Sale.find(dateFilter).sort({ date: 1 });
+        
+        // Agrupar por cliente y mes
+        const customerMonths = {};
+        const monthlyCustomers = {};
+        
+        sales.forEach(sale => {
+            const clientId = sale.clientId.toString();
+            const monthYear = `${sale.date.getFullYear()}-${String(sale.date.getMonth() + 1).padStart(2, '0')}`;
+            
+            if (!customerMonths[clientId]) {
+                customerMonths[clientId] = new Set();
+            }
+            customerMonths[clientId].add(monthYear);
+            
+            if (!monthlyCustomers[monthYear]) {
+                monthlyCustomers[monthYear] = new Set();
+            }
+            monthlyCustomers[monthYear].add(clientId);
+        });
+        
+        // Calcular retention por cohorte
+        const months = Object.keys(monthlyCustomers).sort();
+        const cohortAnalysis = {};
+        
+        months.forEach((month, index) => {
+            const cohortCustomers = monthlyCustomers[month];
+            const cohortSize = cohortCustomers.size;
+            
+            cohortAnalysis[month] = {
+                cohortMonth: month,
+                cohortSize,
+                retention: {}
+            };
+            
+            // Calcular retention para cada mes siguiente
+            for (let i = index; i < months.length; i++) {
+                const futureMonth = months[i];
+                const retainedCustomers = [...cohortCustomers].filter(customer => 
+                    monthlyCustomers[futureMonth] && monthlyCustomers[futureMonth].has(customer)
+                ).length;
+                
+                const retentionRate = cohortSize > 0 ? ((retainedCustomers / cohortSize) * 100).toFixed(2) : 0;
+                const monthsElapsed = i - index;
+                
+                cohortAnalysis[month].retention[`month_${monthsElapsed}`] = {
+                    month: futureMonth,
+                    retained: retainedCustomers,
+                    rate: retentionRate + '%'
+                };
+            }
+        });
+        
+        // Calcular métricas generales
+        const totalCustomers = new Set(sales.map(sale => sale.clientId.toString())).size;
+        const returningCustomers = Object.values(customerMonths).filter(months => months.size > 1).length;
+        const overallRetentionRate = totalCustomers > 0 ? ((returningCustomers / totalCustomers) * 100).toFixed(2) : 0;
+        
+        res.json({
+            period: { startDate, endDate },
+            summary: {
+                totalCustomers,
+                returningCustomers,
+                overallRetentionRate: overallRetentionRate + '%',
+                averageCustomerLifespan: (Object.values(customerMonths)
+                    .reduce((sum, months) => sum + months.size, 0) / totalCustomers).toFixed(1) + ' meses'
+            },
+            cohortAnalysis: Object.values(cohortAnalysis),
+            insights: {
+                bestRetentionCohort: Object.values(cohortAnalysis).reduce((best, cohort) => {
+                    const month1Retention = parseFloat(cohort.retention.month_1?.rate || '0');
+                    const bestMonth1 = parseFloat(best.retention.month_1?.rate || '0');
+                    return month1Retention > bestMonth1 ? cohort : best;
+                }),
+                worstRetentionCohort: Object.values(cohortAnalysis).reduce((worst, cohort) => {
+                    const month1Retention = parseFloat(cohort.retention.month_1?.rate || '100');
+                    const worstMonth1 = parseFloat(worst.retention.month_1?.rate || '100');
+                    return month1Retention < worstMonth1 ? cohort : worst;
+                })
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
