@@ -155,4 +155,13 @@ router.get('/business/analysis/advanced-seasonality', businessRulesController.ge
 
 
 
+// 24. Análisis de Pareto (80/20)
+router.get('/business/analysis/pareto', businessRulesController.getParetoAnalysis);
+
+// 25. Simulador de escenarios
+router.post('/business/simulation/scenarios', businessRulesController.getBusinessScenarioSimulation);
+
+// 26. Análisis de gap de precios
+router.get('/business/pricing/gap-analysis', businessRulesController.getPriceGapAnalysis);
+
 
