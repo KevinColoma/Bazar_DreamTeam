@@ -1871,3 +1871,236 @@ exports.getAdvancedSeasonalityAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+
+
+// Análisis de concentración de ventas (Pareto)
+exports.getParetoAnalysis = async (req, res) => {
+    try {
+        const { days = 90, analysisType = 'products' } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        let analysisData = {};
+        
+        if (analysisType === 'products') {
+            // Análisis por productos
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    const key = item.productId.toString();
+                    if (!analysisData[key]) {
+                        analysisData[key] = {
+                            id: key,
+                            name: item.name,
+                            revenue: 0,
+                            quantity: 0
+                        };
+                    }
+                    analysisData[key].revenue += item.total;
+                    analysisData[key].quantity += item.quantity;
+                });
+            });
+        } else if (analysisType === 'clients') {
+            // Análisis por clientes
+            const clients = await Client.find();
+            const clientMap = {};
+            clients.forEach(client => {
+                clientMap[client._id] = client.fullname;
+            });
+            
+            sales.forEach(sale => {
+                const key = sale.clientId.toString();
+                if (!analysisData[key]) {
+                    analysisData[key] = {
+                        id: key,
+                        name: clientMap[key] || 'Cliente eliminado',
+                        revenue: 0,
+                        transactions: 0
+                    };
+                }
+                analysisData[key].revenue += sale.total;
+                analysisData[key].transactions += 1;
+            });
+        }
+        
+        // Convertir a array y ordenar por ingresos
+        const sortedData = Object.values(analysisData).sort((a, b) => b.revenue - a.revenue);
+        const totalRevenue = sortedData.reduce((sum, item) => sum + item.revenue, 0);
+        
+        // Calcular análisis Pareto
+        let cumulativeRevenue = 0;
+        const paretoData = sortedData.map((item, index) => {
+            cumulativeRevenue += item.revenue;
+            const cumulativePercentage = (cumulativeRevenue / totalRevenue) * 100;
+            const revenuePercentage = (item.revenue / totalRevenue) * 100;
+            
+            return {
+                ...item,
+                rank: index + 1,
+                revenuePercentage: revenuePercentage.toFixed(2) + '%',
+                cumulativePercentage: cumulativePercentage.toFixed(2) + '%',
+                category: cumulativePercentage <= 80 ? 'A' : cumulativePercentage <= 95 ? 'B' : 'C'
+            };
+        });
+        
+        // Calcular estadísticas de Pareto
+        const categoryA = paretoData.filter(item => item.category === 'A');
+        const categoryB = paretoData.filter(item => item.category === 'B');
+        const categoryC = paretoData.filter(item => item.category === 'C');
+        
+        const paretoStats = {
+            categoryA: {
+                count: categoryA.length,
+                percentage: ((categoryA.length / paretoData.length) * 100).toFixed(1) + '%',
+                revenueContribution: categoryA.reduce((sum, item) => sum + item.revenue, 0),
+                revenuePercentage: '~80%'
+            },
+            categoryB: {
+                count: categoryB.length,
+                percentage: ((categoryB.length / paretoData.length) * 100).toFixed(1) + '%',
+                revenueContribution: categoryB.reduce((sum, item) => sum + item.revenue, 0),
+                revenuePercentage: '~15%'
+            },
+            categoryC: {
+                count: categoryC.length,
+                percentage: ((categoryC.length / paretoData.length) * 100).toFixed(1) + '%',
+                revenueContribution: categoryC.reduce((sum, item) => sum + item.revenue, 0),
+                revenuePercentage: '~5%'
+            }
+        };
+        
+        res.json({
+            analysisType,
+            period: `${days} días`,
+            totalItems: paretoData.length,
+            totalRevenue,
+            paretoStats,
+            recommendations: {
+                focusOn: `Los ${categoryA.length} ${analysisType} de categoría A generan el 80% de los ingresos`,
+                optimize: `Considerar estrategias especiales para categoría A`,
+                review: `Evaluar la viabilidad de ${categoryC.length} ${analysisType} de categoría C`
+            },
+            data: paretoData
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Simulador de escenarios de negocio
+exports.getBusinessScenarioSimulation = async (req, res) => {
+    try {
+        const { 
+            scenarioType = 'price_change', 
+            priceChangePercentage = 0,
+            demandChangePercentage = 0,
+            costChangePercentage = 0,
+            productIds = []
+        } = req.body;
+        
+        let products;
+        if (productIds.length > 0) {
+            products = await Product.find({ _id: { $in: productIds } });
+        } else {
+            products = await Product.find();
+        }
+        
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const sales = await Sale.find({ date: { $gte: thirtyDaysAgo } });
+        
+        const simulationResults = products.map(product => {
+            // Calcular ventas actuales
+            let currentSales = 0;
+            let currentRevenue = 0;
+            
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        currentSales += item.quantity;
+                        currentRevenue += item.total;
+                    }
+                });
+            });
+            
+            const currentDailySales = currentSales / 30;
+            const currentProfit = product.salePrice - product.purchasePrice;
+            const currentMargin = product.purchasePrice > 0 ? 
+                ((currentProfit / product.purchasePrice) * 100) : 0;
+            
+            // Aplicar cambios del escenario
+            const newPrice = product.salePrice * (1 + priceChangePercentage / 100);
+            const newCost = product.purchasePrice * (1 + costChangePercentage / 100);
+            const newDemand = currentDailySales * (1 + demandChangePercentage / 100);
+            
+            const newProfit = newPrice - newCost;
+            const newMargin = newCost > 0 ? ((newProfit / newCost) * 100) : 0;
+            const newMonthlyRevenue = newPrice * newDemand * 30;
+            const newMonthlyProfit = newProfit * newDemand * 30;
+            
+            // Calcular impactos
+            const revenueImpact = newMonthlyRevenue - currentRevenue;
+            const profitImpact = newMonthlyProfit - (currentProfit * currentDailySales * 30);
+            const marginDifference = newMargin - currentMargin;
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                current: {
+                    price: product.salePrice,
+                    cost: product.purchasePrice,
+                    profit: currentProfit,
+                    margin: currentMargin.toFixed(2) + '%',
+                    dailySales: currentDailySales.toFixed(2),
+                    monthlyRevenue: currentRevenue
+                },
+                simulated: {
+                    price: newPrice.toFixed(2),
+                    cost: newCost.toFixed(2),
+                    profit: newProfit.toFixed(2),
+                    margin: newMargin.toFixed(2) + '%',
+                    dailySales: newDemand.toFixed(2),
+                    monthlyRevenue: newMonthlyRevenue.toFixed(2)
+                },
+                impact: {
+                    revenueChange: revenueImpact.toFixed(2),
+                    profitChange: profitImpact.toFixed(2),
+                    marginChange: marginDifference.toFixed(2) + '%',
+                    recommendation: profitImpact > 0 ? 'Positivo' : 
+                                   profitImpact < -100 ? 'Muy negativo' : 'Negativo'
+                }
+            };
+        });
+        
+        const totalImpact = {
+            totalRevenueChange: simulationResults.reduce((sum, r) => sum + parseFloat(r.impact.revenueChange), 0),
+            totalProfitChange: simulationResults.reduce((sum, r) => sum + parseFloat(r.impact.profitChange), 0),
+            positiveImpacts: simulationResults.filter(r => parseFloat(r.impact.profitChange) > 0).length,
+            negativeImpacts: simulationResults.filter(r => parseFloat(r.impact.profitChange) < 0).length
+        };
+        
+        res.json({
+            scenarioType,
+            parameters: {
+                priceChangePercentage: priceChangePercentage + '%',
+                demandChangePercentage: demandChangePercentage + '%',
+                costChangePercentage: costChangePercentage + '%'
+            },
+            productsAnalyzed: simulationResults.length,
+            totalImpact,
+            overallRecommendation: totalImpact.totalProfitChange > 0 ? 
+                'Escenario favorable' : 'Escenario desfavorable',
+            results: simulationResults.sort((a, b) => 
+                parseFloat(b.impact.profitChange) - parseFloat(a.impact.profitChange)
+            )
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
