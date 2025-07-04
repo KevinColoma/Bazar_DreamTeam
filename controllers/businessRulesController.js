@@ -911,3 +911,359 @@ exports.getABCAnalysis = async (req, res) => {
     }
 };
 
+
+// Análisis de fidelidad de clientes
+exports.getCustomerLoyaltyAnalysis = async (req, res) => {
+    try {
+        const { months = 12 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setMonth(dateFrom.getMonth() - months);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } }).populate('clientId');
+        const clients = await Client.find();
+        
+        const clientAnalysis = {};
+        
+        // Inicializar análisis de clientes
+        clients.forEach(client => {
+            clientAnalysis[client._id] = {
+                clientId: client._id,
+                clientName: client.fullname,
+                totalPurchases: 0,
+                purchaseFrequency: 0,
+                averagePurchase: 0,
+                lastPurchase: null,
+                daysSinceLastPurchase: null,
+                loyaltyScore: 0,
+                segment: ''
+            };
+        });
+        
+        // Procesar ventas
+        sales.forEach(sale => {
+            if (sale.clientId && clientAnalysis[sale.clientId._id]) {
+                const analysis = clientAnalysis[sale.clientId._id];
+                analysis.totalPurchases += sale.total;
+                analysis.purchaseFrequency += 1;
+                
+                if (!analysis.lastPurchase || sale.date > analysis.lastPurchase) {
+                    analysis.lastPurchase = sale.date;
+                }
+            }
+        });
+        
+        // Calcular métricas finales
+        const today = new Date();
+        Object.values(clientAnalysis).forEach(analysis => {
+            if (analysis.purchaseFrequency > 0) {
+                analysis.averagePurchase = (analysis.totalPurchases / analysis.purchaseFrequency).toFixed(2);
+                
+                if (analysis.lastPurchase) {
+                    analysis.daysSinceLastPurchase = Math.floor((today - analysis.lastPurchase) / (1000 * 60 * 60 * 24));
+                }
+                
+                // Calcular score de lealtad (0-100)
+                const recencyScore = analysis.daysSinceLastPurchase <= 30 ? 30 : 
+                                   analysis.daysSinceLastPurchase <= 60 ? 20 : 
+                                   analysis.daysSinceLastPurchase <= 90 ? 10 : 0;
+                
+                const frequencyScore = analysis.purchaseFrequency >= 10 ? 35 : 
+                                     analysis.purchaseFrequency >= 5 ? 25 : 
+                                     analysis.purchaseFrequency >= 2 ? 15 : 5;
+                
+                const monetaryScore = analysis.totalPurchases >= 1000 ? 35 : 
+                                    analysis.totalPurchases >= 500 ? 25 : 
+                                    analysis.totalPurchases >= 100 ? 15 : 5;
+                
+                analysis.loyaltyScore = recencyScore + frequencyScore + monetaryScore;
+                
+                // Segmentación
+                if (analysis.loyaltyScore >= 80) analysis.segment = 'VIP';
+                else if (analysis.loyaltyScore >= 60) analysis.segment = 'Leal';
+                else if (analysis.loyaltyScore >= 40) analysis.segment = 'Regular';
+                else if (analysis.loyaltyScore >= 20) analysis.segment = 'En riesgo';
+                else analysis.segment = 'Inactivo';
+            } else {
+                analysis.segment = 'Sin compras';
+            }
+        });
+        
+        const segmentSummary = {
+            'VIP': Object.values(clientAnalysis).filter(c => c.segment === 'VIP').length,
+            'Leal': Object.values(clientAnalysis).filter(c => c.segment === 'Leal').length,
+            'Regular': Object.values(clientAnalysis).filter(c => c.segment === 'Regular').length,
+            'En riesgo': Object.values(clientAnalysis).filter(c => c.segment === 'En riesgo').length,
+            'Inactivo': Object.values(clientAnalysis).filter(c => c.segment === 'Inactivo').length,
+            'Sin compras': Object.values(clientAnalysis).filter(c => c.segment === 'Sin compras').length
+        };
+        
+        res.json({
+            period: `${months} meses`,
+            totalClients: clients.length,
+            segmentSummary,
+            averageLoyaltyScore: (Object.values(clientAnalysis)
+                .reduce((sum, c) => sum + c.loyaltyScore, 0) / clients.length).toFixed(2),
+            clients: Object.values(clientAnalysis)
+                .sort((a, b) => b.loyaltyScore - a.loyaltyScore)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de cross-selling
+exports.getCrossSellAnalysis = async (req, res) => {
+    try {
+        const { minSupport = 0.01 } = req.query;
+        
+        const sales = await Sale.find();
+        const products = await Product.find();
+        
+        // Crear mapa de productos
+        const productMap = {};
+        products.forEach(product => {
+            productMap[product._id] = product.name;
+        });
+        
+        // Analizar combinaciones de productos
+        const productCombinations = {};
+        const productCounts = {};
+        
+        sales.forEach(sale => {
+            if (sale.items.length > 1) {
+                // Contar productos individuales
+                sale.items.forEach(item => {
+                    const productId = item.productId.toString();
+                    productCounts[productId] = (productCounts[productId] || 0) + 1;
+                });
+                
+                // Contar combinaciones
+                for (let i = 0; i < sale.items.length; i++) {
+                    for (let j = i + 1; j < sale.items.length; j++) {
+                        const product1 = sale.items[i].productId.toString();
+                        const product2 = sale.items[j].productId.toString();
+                        const combination = [product1, product2].sort().join('-');
+                        
+                        productCombinations[combination] = (productCombinations[combination] || 0) + 1;
+                    }
+                }
+            }
+        });
+        
+        // Calcular support y confidence
+        const totalTransactions = sales.length;
+        const rules = [];
+        
+        Object.keys(productCombinations).forEach(combination => {
+            const [product1, product2] = combination.split('-');
+            const combinationCount = productCombinations[combination];
+            const support = combinationCount / totalTransactions;
+            
+            if (support >= minSupport) {
+                const confidence1to2 = combinationCount / (productCounts[product1] || 1);
+                const confidence2to1 = combinationCount / (productCounts[product2] || 1);
+                
+                rules.push({
+                    product1: {
+                        id: product1,
+                        name: productMap[product1] || 'Producto eliminado'
+                    },
+                    product2: {
+                        id: product2,
+                        name: productMap[product2] || 'Producto eliminado'
+                    },
+                    support: (support * 100).toFixed(2) + '%',
+                    confidence1to2: (confidence1to2 * 100).toFixed(2) + '%',
+                    confidence2to1: (confidence2to1 * 100).toFixed(2) + '%',
+                    strength: ((support * Math.max(confidence1to2, confidence2to1)) * 100).toFixed(2)
+                });
+            }
+        });
+        
+        // Ordenar por fuerza de la regla
+        rules.sort((a, b) => parseFloat(b.strength) - parseFloat(a.strength));
+        
+        res.json({
+            totalTransactions,
+            minSupport: (minSupport * 100).toFixed(2) + '%',
+            rulesFound: rules.length,
+            topRules: rules.slice(0, 20),
+            recommendations: rules.slice(0, 10).map(rule => ({
+                suggestion: `Cuando se compre "${rule.product1.name}", recomendar "${rule.product2.name}"`,
+                confidence: rule.confidence1to2,
+                strength: rule.strength
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de rentabilidad por cliente
+exports.getCustomerProfitabilityAnalysis = async (req, res) => {
+    try {
+        const { months = 12 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setMonth(dateFrom.getMonth() - months);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } }).populate('clientId');
+        const products = await Product.find();
+        
+        const productCostMap = {};
+        products.forEach(product => {
+            productCostMap[product._id] = product.purchasePrice;
+        });
+        
+        const clientProfitability = {};
+        
+        sales.forEach(sale => {
+            if (sale.clientId) {
+                const clientId = sale.clientId._id.toString();
+                
+                if (!clientProfitability[clientId]) {
+                    clientProfitability[clientId] = {
+                        clientId,
+                        clientName: sale.clientId.fullname,
+                        totalRevenue: 0,
+                        totalCost: 0,
+                        totalProfit: 0,
+                        transactionCount: 0,
+                        averageOrderValue: 0,
+                        profitMargin: 0
+                    };
+                }
+                
+                const client = clientProfitability[clientId];
+                client.totalRevenue += sale.total;
+                client.transactionCount += 1;
+                
+                // Calcular costo
+                sale.items.forEach(item => {
+                    const cost = productCostMap[item.productId] || 0;
+                    client.totalCost += cost * item.quantity;
+                });
+            }
+        });
+        
+        // Calcular métricas finales
+        Object.values(clientProfitability).forEach(client => {
+            client.totalProfit = client.totalRevenue - client.totalCost;
+            client.averageOrderValue = (client.totalRevenue / client.transactionCount).toFixed(2);
+            client.profitMargin = client.totalRevenue > 0 ? 
+                ((client.totalProfit / client.totalRevenue) * 100).toFixed(2) : 0;
+        });
+        
+        const sortedClients = Object.values(clientProfitability)
+            .sort((a, b) => b.totalProfit - a.totalProfit);
+        
+        const totalProfit = sortedClients.reduce((sum, client) => sum + client.totalProfit, 0);
+        const totalRevenue = sortedClients.reduce((sum, client) => sum + client.totalRevenue, 0);
+        
+        res.json({
+            period: `${months} meses`,
+            totalClients: sortedClients.length,
+            totalRevenue,
+            totalProfit,
+            overallMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) + '%' : '0%',
+            topProfitableClients: sortedClients.slice(0, 10),
+            leastProfitableClients: sortedClients.slice(-5),
+            pareto: {
+                top20Percent: sortedClients.slice(0, Math.ceil(sortedClients.length * 0.2)),
+                contributionOfTop20: ((sortedClients.slice(0, Math.ceil(sortedClients.length * 0.2))
+                    .reduce((sum, c) => sum + c.totalProfit, 0) / totalProfit) * 100).toFixed(2) + '%'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de optimización de precios
+exports.getPriceOptimizationAnalysis = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const sales = await Sale.find({ date: { $gte: thirtyDaysAgo } });
+        
+        const priceAnalysis = products.map(product => {
+            let totalSold = 0;
+            let totalRevenue = 0;
+            
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        totalSold += item.quantity;
+                        totalRevenue += item.total;
+                    }
+                });
+            });
+            
+            const currentMargin = ((product.salePrice - product.purchasePrice) / product.purchasePrice) * 100;
+            const averageDailySales = totalSold / 30;
+            
+            // Simulaciones de precio
+            const priceScenarios = [
+                { change: -10, newPrice: product.salePrice * 0.9 },
+                { change: -5, newPrice: product.salePrice * 0.95 },
+                { change: 5, newPrice: product.salePrice * 1.05 },
+                { change: 10, newPrice: product.salePrice * 1.1 },
+                { change: 15, newPrice: product.salePrice * 1.15 }
+            ].map(scenario => {
+                const newMargin = ((scenario.newPrice - product.purchasePrice) / product.purchasePrice) * 100;
+                // Estimación simple de elasticidad (asumiendo elasticidad de -1.5)
+                const demandChange = scenario.change * -1.5;
+                const estimatedNewSales = averageDailySales * (1 + demandChange / 100);
+                const estimatedRevenue = estimatedNewSales * scenario.newPrice * 30;
+                
+                return {
+                    priceChange: scenario.change + '%',
+                    newPrice: newMargin.toFixed(2),
+                    newMargin: newMargin.toFixed(2) + '%',
+                    estimatedDemandChange: demandChange.toFixed(1) + '%',
+                    estimatedMonthlySales: Math.max(0, estimatedNewSales * 30).toFixed(0),
+                    estimatedMonthlyRevenue: Math.max(0, estimatedRevenue).toFixed(2)
+                };
+            });
+            
+            // Recomendación
+            let recommendation = 'Mantener precio actual';
+            if (currentMargin < 20 && averageDailySales > 1) {
+                recommendation = 'Considerar aumento de precio';
+            } else if (currentMargin > 60 && averageDailySales < 0.5) {
+                recommendation = 'Considerar reducción de precio';
+            } else if (totalSold === 0) {
+                recommendation = 'Revisar estrategia de precio';
+            }
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                currentPrice: product.salePrice,
+                currentMargin: currentMargin.toFixed(2) + '%',
+                averageDailySales: averageDailySales.toFixed(2),
+                monthlyRevenue: totalRevenue.toFixed(2),
+                recommendation,
+                priceScenarios
+            };
+        });
+        
+        res.json({
+            totalProducts: priceAnalysis.length,
+            period: 'Últimos 30 días',
+            products: priceAnalysis.sort((a, b) => parseFloat(b.monthlyRevenue) - parseFloat(a.monthlyRevenue)),
+            summary: {
+                avgMargin: (priceAnalysis.reduce((sum, p) => sum + parseFloat(p.currentMargin), 0) / priceAnalysis.length).toFixed(2) + '%',
+                highMarginProducts: priceAnalysis.filter(p => parseFloat(p.currentMargin) > 50).length,
+                lowMarginProducts: priceAnalysis.filter(p => parseFloat(p.currentMargin) < 20).length,
+                slowMovingProducts: priceAnalysis.filter(p => parseFloat(p.averageDailySales) < 0.1).length
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
