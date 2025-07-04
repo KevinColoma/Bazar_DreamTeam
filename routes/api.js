@@ -104,6 +104,12 @@ router.get('/business/products/:productId/predict-demand', businessRulesControll
 
 
 
+// 10. Análisis ABC
+router.get('/business/products/abc-analysis', businessRulesController.getABCAnalysis);
+
+// 11. Análisis de competitividad
+router.get('/business/competitive/analysis', businessRulesController.getCompetitiveAnalysis);
+router.get('/business/competitive/analysis/:categoryId', businessRulesController.getCompetitiveAnalysis);
 
 
 
