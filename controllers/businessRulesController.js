@@ -618,3 +618,110 @@ exports.getBusinessAlerts = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+
+// Dashboard summary
+exports.getDashboardSummary = async (req, res) => {
+    try {
+        const today = new Date();
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        // Estadísticas básicas
+        const totalProducts = await Product.countDocuments();
+        const totalClients = await Client.countDocuments();
+        const totalCategories = await Category.countDocuments();
+        
+        // Ventas del último mes
+        const recentSales = await Sale.find({ date: { $gte: thirtyDaysAgo } });
+        const monthlyRevenue = recentSales.reduce((sum, sale) => sum + sale.total, 0);
+        
+        // Productos con bajo stock
+        const lowStockCount = await Product.countDocuments({ stock: { $lte: 10 } });
+        
+        // Valor del inventario
+        const products = await Product.find();
+        const inventoryValue = products.reduce((sum, product) => {
+            return sum + (product.salePrice * product.stock);
+        }, 0);
+        
+        // Cliente top
+        const clientSales = {};
+        recentSales.forEach(sale => {
+            const clientId = sale.clientId.toString();
+            clientSales[clientId] = (clientSales[clientId] || 0) + sale.total;
+        });
+        
+        const topClientId = Object.keys(clientSales).reduce((a, b) => 
+            clientSales[a] > clientSales[b] ? a : b, Object.keys(clientSales)[0]);
+        
+        let topClient = null;
+        if (topClientId) {
+            topClient = await Client.findById(topClientId);
+        }
+        
+        res.json({
+            period: 'Últimos 30 días',
+            summary: {
+                totalProducts,
+                totalClients,
+                totalCategories,
+                monthlyRevenue,
+                salesCount: recentSales.length,
+                lowStockCount,
+                inventoryValue,
+                topClient: topClient ? {
+                    name: topClient.fullname,
+                    totalPurchased: clientSales[topClientId]
+                } : null
+            },
+            timestamp: new Date()
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+
+
+// Análisis de temporada
+exports.getSeasonalAnalysis = async (req, res) => {
+    try {
+        const { year = new Date().getFullYear() } = req.query;
+        
+        const startOfYear = new Date(year, 0, 1);
+        const endOfYear = new Date(year, 11, 31);
+        
+        const sales = await Sale.find({
+            date: { $gte: startOfYear, $lte: endOfYear }
+        });
+        
+        const monthlyData = {};
+        for (let i = 0; i < 12; i++) {
+            monthlyData[i] = { month: i + 1, total: 0, count: 0 };
+        }
+        
+        sales.forEach(sale => {
+            const month = sale.date.getMonth();
+            monthlyData[month].total += sale.total;
+            monthlyData[month].count += 1;
+        });
+        
+        const seasonalData = Object.values(monthlyData);
+        const bestMonth = seasonalData.reduce((max, current) => 
+            current.total > max.total ? current : max, seasonalData[0]);
+        
+        res.json({
+            year,
+            monthlyData: seasonalData,
+            bestMonth,
+            totalYearSales: seasonalData.reduce((sum, month) => sum + month.total, 0),
+            averageMonthly: (seasonalData.reduce((sum, month) => sum + month.total, 0) / 12).toFixed(2)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
