@@ -111,6 +111,16 @@ router.get('/business/products/abc-analysis', businessRulesController.getABCAnal
 router.get('/business/competitive/analysis', businessRulesController.getCompetitiveAnalysis);
 router.get('/business/competitive/analysis/:categoryId', businessRulesController.getCompetitiveAnalysis);
 
+// 12. Análisis de riesgo de inventario
+router.get('/business/inventory/risk-analysis', businessRulesController.getInventoryRiskAnalysis);
+
+// 13. Análisis de fidelidad de clientes
+router.get('/business/customers/loyalty-analysis', businessRulesController.getCustomerLoyaltyAnalysis);
+
+// 14. Análisis de cross-selling
+router.get('/business/sales/cross-sell-analysis', businessRulesController.getCrossSellAnalysis);
+
+
 
 
 
