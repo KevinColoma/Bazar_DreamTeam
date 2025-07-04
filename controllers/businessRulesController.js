@@ -379,3 +379,85 @@ exports.getCategoryPerformance = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+// Métricas de rentabilidad
+exports.calculateROI = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        let dateFilter = {};
+        
+        if (startDate && endDate) {
+            dateFilter = {
+                date: {
+                    $gte: new Date(startDate),
+                    $lte: new Date(endDate)
+                }
+            };
+        }
+        
+        const sales = await Sale.find(dateFilter);
+        const products = await Product.find();
+        
+        let totalRevenue = 0;
+        let totalCost = 0;
+        
+        sales.forEach(sale => {
+            totalRevenue += sale.total;
+            sale.items.forEach(item => {
+                const product = products.find(p => p._id.toString() === item.productId.toString());
+                if (product) {
+                    totalCost += product.purchasePrice * item.quantity;
+                }
+            });
+        });
+        
+        const grossProfit = totalRevenue - totalCost;
+        const roi = totalCost > 0 ? ((grossProfit / totalCost) * 100).toFixed(2) : 0;
+        
+        res.json({
+            period: { startDate, endDate },
+            totalRevenue,
+            totalCost,
+            grossProfit,
+            roi: `${roi}%`,
+            profitMargin: totalRevenue > 0 ? `${((grossProfit / totalRevenue) * 100).toFixed(2)}%` : '0%'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de tendencias
+exports.getSalesTrend = async (req, res) => {
+    try {
+        const { days = 30 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({ date: { $gte: dateFrom } }).sort({ date: 1 });
+        
+        const dailySales = {};
+        sales.forEach(sale => {
+            const dateKey = sale.date.toISOString().split('T')[0];
+            if (!dailySales[dateKey]) {
+                dailySales[dateKey] = { date: dateKey, total: 0, count: 0 };
+            }
+            dailySales[dateKey].total += sale.total;
+            dailySales[dateKey].count += 1;
+        });
+        
+        const trend = Object.values(dailySales);
+        const totalSales = trend.reduce((sum, day) => sum + day.total, 0);
+        const averageDaily = trend.length > 0 ? (totalSales / trend.length).toFixed(2) : 0;
+        
+        res.json({
+            period: `${days} días`,
+            dailyTrend: trend,
+            totalSales,
+            averageDailySales: parseFloat(averageDaily),
+            totalDays: trend.length
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
