@@ -123,6 +123,20 @@ router.get('/business/sales/cross-sell-analysis', businessRulesController.getCro
 
 
 
+// 15. Análisis de rentabilidad por cliente
+router.get('/business/customers/profitability-analysis', businessRulesController.getCustomerProfitabilityAnalysis);
+
+// 16. Análisis de optimización de precios
+router.get('/business/pricing/optimization-analysis', businessRulesController.getPriceOptimizationAnalysis);
+
+// 17. Análisis de patrones de compra
+router.get('/business/sales/purchase-patterns', businessRulesController.getPurchasePatternAnalysis);
+
+// 18. Análisis de retención de clientes
+router.get('/business/customers/retention-analysis', businessRulesController.getCustomerRetentionAnalysis);
+
+
+
 
 
 
