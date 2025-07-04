@@ -75,3 +75,91 @@ exports.getLowStockProducts = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+exports.calculateProductRotation = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { days = 30 } = req.query;
+        
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({
+            'items.productId': productId,
+            date: { $gte: dateFrom }
+        });
+        
+        let totalSold = 0;
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                if (item.productId.toString() === productId) {
+                    totalSold += item.quantity;
+                }
+            });
+        });
+        
+        const rotationRate = product.stock > 0 ? (totalSold / product.stock).toFixed(2) : 0;
+        const daysToSellOut = product.stock > 0 && totalSold > 0 ? 
+            Math.ceil((product.stock / totalSold) * days) : 'N/A';
+        
+        res.json({
+            productId,
+            productName: product.name,
+            currentStock: product.stock,
+            soldInPeriod: totalSold,
+            periodDays: days,
+            rotationRate,
+            daysToSellOut
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+exports.calculateProductRotation = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { days = 30 } = req.query;
+        
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const sales = await Sale.find({
+            'items.productId': productId,
+            date: { $gte: dateFrom }
+        });
+        
+        let totalSold = 0;
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                if (item.productId.toString() === productId) {
+                    totalSold += item.quantity;
+                }
+            });
+        });
+        
+        const rotationRate = product.stock > 0 ? (totalSold / product.stock).toFixed(2) : 0;
+        const daysToSellOut = product.stock > 0 && totalSold > 0 ? 
+            Math.ceil((product.stock / totalSold) * days) : 'N/A';
+        
+        res.json({
+            productId,
+            productName: product.name,
+            currentStock: product.stock,
+            soldInPeriod: totalSold,
+            periodDays: days,
+            rotationRate,
+            daysToSellOut
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
