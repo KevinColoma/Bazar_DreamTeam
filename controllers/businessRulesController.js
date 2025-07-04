@@ -725,3 +725,55 @@ exports.getSeasonalAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+// Análisis de eficiencia de inventario
+exports.getInventoryEfficiency = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const sales = await Sale.find({ date: { $gte: thirtyDaysAgo } });
+        
+        const productAnalysis = products.map(product => {
+            let totalSold = 0;
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        totalSold += item.quantity;
+                    }
+                });
+            });
+            
+            const turnoverRate = product.stock > 0 ? (totalSold / product.stock).toFixed(2) : 0;
+            const daysOfInventory = totalSold > 0 ? Math.ceil((product.stock / totalSold) * 30) : 'N/A';
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                currentStock: product.stock,
+                soldLast30Days: totalSold,
+                turnoverRate: parseFloat(turnoverRate),
+                daysOfInventory,
+                efficiency: turnoverRate > 1 ? 'Alta' : turnoverRate > 0.5 ? 'Media' : 'Baja'
+            };
+        });
+        
+        const avgTurnover = productAnalysis.reduce((sum, p) => sum + p.turnoverRate, 0) / productAnalysis.length;
+        
+        res.json({
+            period: 'Últimos 30 días',
+            averageTurnoverRate: avgTurnover.toFixed(2),
+            products: productAnalysis.sort((a, b) => b.turnoverRate - a.turnoverRate),
+            summary: {
+                highEfficiency: productAnalysis.filter(p => p.efficiency === 'Alta').length,
+                mediumEfficiency: productAnalysis.filter(p => p.efficiency === 'Media').length,
+                lowEfficiency: productAnalysis.filter(p => p.efficiency === 'Baja').length
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
