@@ -2282,3 +2282,225 @@ exports.getPriceDispersionAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+// Análisis de productividad de inventario
+exports.getInventoryProductivityAnalysis = async (req, res) => {
+    try {
+        const { days = 90 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const products = await Product.find().populate('categoryId');
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        
+        const productivityAnalysis = products.map(product => {
+            let totalSold = 0;
+            let totalRevenue = 0;
+            
+            sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === product._id.toString()) {
+                        totalSold += item.quantity;
+                        totalRevenue += item.total;
+                    }
+                });
+            });
+            
+            const inventoryValue = product.stock * product.purchasePrice;
+            const turnoverRatio = inventoryValue > 0 ? (totalRevenue / inventoryValue).toFixed(2) : 0;
+            const stockDays = totalSold > 0 ? Math.ceil((product.stock / totalSold) * parseInt(days)) : 'N/A';
+            
+            // Métricas de productividad
+            const revenuePerUnit = product.stock > 0 ? (totalRevenue / product.stock).toFixed(2) : 0;
+            const profitPerUnit = product.stock > 0 ? ((product.salePrice - product.purchasePrice) * totalSold / product.stock).toFixed(2) : 0;
+            
+            // Clasificación de productividad
+            let productivityRating;
+            if (parseFloat(turnoverRatio) >= 2) productivityRating = 'Excelente';
+            else if (parseFloat(turnoverRatio) >= 1) productivityRating = 'Buena';
+            else if (parseFloat(turnoverRatio) >= 0.5) productivityRating = 'Regular';
+            else if (parseFloat(turnoverRatio) > 0) productivityRating = 'Baja';
+            else productivityRating = 'Sin actividad';
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                category: product.categoryId?.name,
+                currentStock: product.stock,
+                inventoryValue,
+                soldInPeriod: totalSold,
+                revenueGenerated: totalRevenue,
+                turnoverRatio: parseFloat(turnoverRatio),
+                stockDays,
+                revenuePerUnit: parseFloat(revenuePerUnit),
+                profitPerUnit: parseFloat(profitPerUnit),
+                productivityRating,
+                efficiency: parseFloat(turnoverRatio) * 100 // Porcentaje de eficiencia
+            };
+        });
+        
+        // Estadísticas generales
+        const totalInventoryValue = productivityAnalysis.reduce((sum, p) => sum + p.inventoryValue, 0);
+        const totalRevenue = productivityAnalysis.reduce((sum, p) => sum + p.revenueGenerated, 0);
+        const overallTurnover = totalInventoryValue > 0 ? (totalRevenue / totalInventoryValue).toFixed(2) : 0;
+        
+        const productivitySummary = {
+            'Excelente': productivityAnalysis.filter(p => p.productivityRating === 'Excelente').length,
+            'Buena': productivityAnalysis.filter(p => p.productivityRating === 'Buena').length,
+            'Regular': productivityAnalysis.filter(p => p.productivityRating === 'Regular').length,
+            'Baja': productivityAnalysis.filter(p => p.productivityRating === 'Baja').length,
+            'Sin actividad': productivityAnalysis.filter(p => p.productivityRating === 'Sin actividad').length
+        };
+        
+        res.json({
+            period: `${days} días`,
+            totalProducts: productivityAnalysis.length,
+            totalInventoryValue,
+            totalRevenue,
+            overallTurnoverRatio: parseFloat(overallTurnover),
+            productivitySummary,
+            topPerformers: productivityAnalysis
+                .filter(p => p.turnoverRatio > 0)
+                .sort((a, b) => b.turnoverRatio - a.turnoverRatio)
+                .slice(0, 10),
+            bottomPerformers: productivityAnalysis
+                .filter(p => p.turnoverRatio > 0)
+                .sort((a, b) => a.turnoverRatio - b.turnoverRatio)
+                .slice(0, 10),
+            allProducts: productivityAnalysis.sort((a, b) => b.turnoverRatio - a.turnoverRatio)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de elasticidad de precios (simulado)
+exports.getPriceElasticityAnalysis = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { periods = 6 } = req.query; // Número de períodos a analizar
+        
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        
+        // Simular análisis de elasticidad usando datos históricos
+        const periodLength = 30; // días por período
+        const elasticityData = [];
+        
+        for (let i = 0; i < parseInt(periods); i++) {
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - (periodLength * (i + 1)));
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() - (periodLength * i));
+            
+            const periodSales = await Sale.find({
+                date: { $gte: startDate, $lte: endDate }
+            });
+            
+            let quantitySold = 0;
+            let avgPrice = 0;
+            let totalRevenue = 0;
+            
+            periodSales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === productId) {
+                        quantitySold += item.quantity;
+                        totalRevenue += item.total;
+                    }
+                });
+            });
+            
+            avgPrice = quantitySold > 0 ? totalRevenue / quantitySold : product.salePrice;
+            
+            elasticityData.push({
+                period: i + 1,
+                startDate: startDate.toISOString().split('T')[0],
+                endDate: endDate.toISOString().split('T')[0],
+                avgPrice: avgPrice.toFixed(2),
+                quantitySold,
+                revenue: totalRevenue
+            });
+        }
+        
+        // Calcular elasticidad entre períodos
+        const elasticityCalculations = [];
+        for (let i = 1; i < elasticityData.length; i++) {
+            const currentPeriod = elasticityData[i-1];
+            const previousPeriod = elasticityData[i];
+            
+            if (previousPeriod.quantitySold > 0 && currentPeriod.quantitySold > 0) {
+                const priceChange = (currentPeriod.avgPrice - previousPeriod.avgPrice) / previousPeriod.avgPrice;
+                const quantityChange = (currentPeriod.quantitySold - previousPeriod.quantitySold) / previousPeriod.quantitySold;
+                
+                const elasticity = priceChange !== 0 ? quantityChange / priceChange : 0;
+                
+                elasticityCalculations.push({
+                    periodComparison: `${previousPeriod.period} vs ${currentPeriod.period}`,
+                    priceChange: (priceChange * 100).toFixed(2) + '%',
+                    quantityChange: (quantityChange * 100).toFixed(2) + '%',
+                    elasticity: elasticity.toFixed(2),
+                    elasticityType: Math.abs(elasticity) > 1 ? 'Elástico' : 
+                                   Math.abs(elasticity) > 0 ? 'Inelástico' : 'Perfectamente inelástico'
+                });
+            }
+        }
+        
+        // Calcular elasticidad promedio
+        const avgElasticity = elasticityCalculations.length > 0 ? 
+            (elasticityCalculations.reduce((sum, calc) => sum + parseFloat(calc.elasticity), 0) / elasticityCalculations.length).toFixed(2) : 0;
+        
+        // Simulaciones de precio basadas en elasticidad
+        const currentPrice = product.salePrice;
+        const recentSales = elasticityData[0]?.quantitySold || 1;
+        
+        const priceSimulations = [
+            { change: -20, newPrice: currentPrice * 0.8 },
+            { change: -10, newPrice: currentPrice * 0.9 },
+            { change: -5, newPrice: currentPrice * 0.95 },
+            { change: 5, newPrice: currentPrice * 1.05 },
+            { change: 10, newPrice: currentPrice * 1.1 },
+            { change: 20, newPrice: currentPrice * 1.2 }
+        ].map(sim => {
+            const priceChangeRatio = sim.change / 100;
+            const expectedQuantityChange = parseFloat(avgElasticity) * priceChangeRatio;
+            const expectedQuantity = Math.max(0, recentSales * (1 + expectedQuantityChange));
+            const expectedRevenue = sim.newPrice * expectedQuantity;
+            
+            return {
+                priceChange: sim.change + '%',
+                newPrice: sim.newPrice.toFixed(2),
+                expectedQuantityChange: (expectedQuantityChange * 100).toFixed(2) + '%',
+                expectedQuantity: expectedQuantity.toFixed(1),
+                expectedRevenue: expectedRevenue.toFixed(2),
+                revenueImpact: (expectedRevenue - (currentPrice * recentSales)).toFixed(2)
+            };
+        });
+        
+        res.json({
+            productId,
+            productName: product.name,
+            currentPrice,
+            analysisperiods: parseInt(periods),
+            periodData: elasticityData,
+            elasticityCalculations,
+            averageElasticity: parseFloat(avgElasticity),
+            elasticityType: Math.abs(parseFloat(avgElasticity)) > 1 ? 'Producto elástico' : 
+                           Math.abs(parseFloat(avgElasticity)) > 0 ? 'Producto inelástico' : 'Sin datos suficientes',
+            priceSimulations,
+            recommendations: {
+                optimal: parseFloat(avgElasticity) < -1 ? 
+                    'Considerar reducción de precio para aumentar ingresos' :
+                    'Posible aumento de precio sin pérdida significativa de demanda',
+                elasticityInsight: `Una elasticidad de ${avgElasticity} indica que por cada 1% de cambio en precio, la demanda cambia ${Math.abs(parseFloat(avgElasticity))}%`
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
