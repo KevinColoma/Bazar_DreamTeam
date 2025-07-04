@@ -165,3 +165,9 @@ router.post('/business/simulation/scenarios', businessRulesController.getBusines
 router.get('/business/pricing/gap-analysis', businessRulesController.getPriceGapAnalysis);
 
 
+// 27. Análisis de dispersión de precios
+router.get('/business/pricing/dispersion-analysis', businessRulesController.getPriceDispersionAnalysis);
+
+// 28. Análisis de productividad de inventario
+router.get('/business/inventory/productivity-analysis', businessRulesController.getInventoryProductivityAnalysis);
+
