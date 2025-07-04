@@ -171,3 +171,10 @@ router.get('/business/pricing/dispersion-analysis', businessRulesController.getP
 // 28. Análisis de productividad de inventario
 router.get('/business/inventory/productivity-analysis', businessRulesController.getInventoryProductivityAnalysis);
 
+// 29. Análisis de elasticidad de precios
+router.get('/business/pricing/elasticity-analysis/:productId', businessRulesController.getPriceElasticityAnalysis);
+
+// 30. Análisis de crecimiento y tendencias
+router.get('/business/growth/trend-analysis', businessRulesController.getGrowthTrendAnalysis);
+
+module.exports = router;
