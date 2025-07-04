@@ -1455,3 +1455,176 @@ exports.getCustomerRetentionAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+
+// Análisis de performance de productos por período
+exports.getProductPerformanceComparison = async (req, res) => {
+    try {
+        const { period1Start, period1End, period2Start, period2End } = req.query;
+        
+        if (!period1Start || !period1End || !period2Start || !period2End) {
+            return res.status(400).json({ 
+                error: 'Se requieren los parámetros: period1Start, period1End, period2Start, period2End' 
+            });
+        }
+        
+        const period1Sales = await Sale.find({
+            date: { $gte: new Date(period1Start), $lte: new Date(period1End) }
+        });
+        
+        const period2Sales = await Sale.find({
+            date: { $gte: new Date(period2Start), $lte: new Date(period2End) }
+        });
+        
+        const products = await Product.find();
+        
+        const productComparison = products.map(product => {
+            const productId = product._id.toString();
+            
+            // Período 1
+            let period1Revenue = 0;
+            let period1Quantity = 0;
+            period1Sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === productId) {
+                        period1Revenue += item.total;
+                        period1Quantity += item.quantity;
+                    }
+                });
+            });
+            
+            // Período 2
+            let period2Revenue = 0;
+            let period2Quantity = 0;
+            period2Sales.forEach(sale => {
+                sale.items.forEach(item => {
+                    if (item.productId.toString() === productId) {
+                        period2Revenue += item.total;
+                        period2Quantity += item.quantity;
+                    }
+                });
+            });
+            
+            // Calcular cambios
+            const revenueChange = period1Revenue > 0 ? 
+                (((period2Revenue - period1Revenue) / period1Revenue) * 100).toFixed(2) : 
+                period2Revenue > 0 ? 100 : 0;
+            
+            const quantityChange = period1Quantity > 0 ? 
+                (((period2Quantity - period1Quantity) / period1Quantity) * 100).toFixed(2) : 
+                period2Quantity > 0 ? 100 : 0;
+            
+            return {
+                productId: product._id,
+                name: product.name,
+                period1: {
+                    revenue: period1Revenue,
+                    quantity: period1Quantity
+                },
+                period2: {
+                    revenue: period2Revenue,
+                    quantity: period2Quantity
+                },
+                changes: {
+                    revenueChange: revenueChange + '%',
+                    quantityChange: quantityChange + '%',
+                    trend: revenueChange > 10 ? 'Creciendo' : 
+                           revenueChange < -10 ? 'Declinando' : 'Estable'
+                }
+            };
+        });
+        
+        // Ordenar por cambio en ingresos
+        const sortedProducts = productComparison.sort((a, b) => 
+            parseFloat(b.changes.revenueChange) - parseFloat(a.changes.revenueChange)
+        );
+        
+        res.json({
+            periods: {
+                period1: { start: period1Start, end: period1End },
+                period2: { start: period2Start, end: period2End }
+            },
+            summary: {
+                totalProducts: products.length,
+                growing: sortedProducts.filter(p => parseFloat(p.changes.revenueChange) > 10).length,
+                stable: sortedProducts.filter(p => {
+                    const change = parseFloat(p.changes.revenueChange);
+                    return change >= -10 && change <= 10;
+                }).length,
+                declining: sortedProducts.filter(p => parseFloat(p.changes.revenueChange) < -10).length
+            },
+            topGainers: sortedProducts.slice(0, 10),
+            topLosers: sortedProducts.slice(-10).reverse(),
+            allProducts: sortedProducts
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de margen por categoría
+exports.getCategoryMarginAnalysis = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        const categories = await Category.find();
+        
+        const categoryAnalysis = categories.map(category => {
+            const categoryProducts = products.filter(p => 
+                p.categoryId && p.categoryId._id.toString() === category._id.toString()
+            );
+            
+            if (categoryProducts.length === 0) {
+                return {
+                    categoryId: category._id,
+                    categoryName: category.name,
+                    productCount: 0,
+                    averageMargin: 0,
+                    totalInventoryValue: 0,
+                    highMarginProducts: 0,
+                    lowMarginProducts: 0
+                };
+            }
+            
+            const margins = categoryProducts.map(p => 
+                ((p.salePrice - p.purchasePrice) / p.purchasePrice) * 100
+            );
+            
+            const averageMargin = margins.reduce((sum, margin) => sum + margin, 0) / margins.length;
+            const totalInventoryValue = categoryProducts.reduce((sum, p) => sum + (p.salePrice * p.stock), 0);
+            
+            return {
+                categoryId: category._id,
+                categoryName: category.name,
+                productCount: categoryProducts.length,
+                averageMargin: averageMargin.toFixed(2) + '%',
+                totalInventoryValue,
+                highMarginProducts: margins.filter(m => m > 50).length,
+                lowMarginProducts: margins.filter(m => m < 20).length,
+                marginDistribution: {
+                    excellent: margins.filter(m => m > 60).length,
+                    good: margins.filter(m => m >= 40 && m <= 60).length,
+                    fair: margins.filter(m => m >= 20 && m < 40).length,
+                    poor: margins.filter(m => m < 20).length
+                }
+            };
+        });
+        
+        res.json({
+            totalCategories: categories.length,
+            categoryAnalysis: categoryAnalysis.sort((a, b) => parseFloat(b.averageMargin) - parseFloat(a.averageMargin)),
+            overallStats: {
+                bestCategory: categoryAnalysis.reduce((best, cat) => 
+                    parseFloat(cat.averageMargin) > parseFloat(best.averageMargin) ? cat : best
+                ),
+                worstCategory: categoryAnalysis.reduce((worst, cat) => 
+                    parseFloat(cat.averageMargin) < parseFloat(worst.averageMargin) ? cat : worst
+                )
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
