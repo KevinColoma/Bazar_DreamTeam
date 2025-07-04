@@ -272,3 +272,110 @@ exports.calculateClientValue = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+exports.predictNextPurchase = async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        
+        const client = await Client.findById(clientId);
+        if (!client) {
+            return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+        
+        const sales = await Sale.find({ clientId }).sort({ date: -1 }).limit(5);
+        
+        if (sales.length < 2) {
+            return res.json({
+                clientId,
+                clientName: client.fullname,
+                prediction: 'Datos insuficientes para predicción',
+                lastPurchase: sales[0]?.date || 'Nunca'
+            });
+        }
+        
+        // Calcular promedio de días entre compras
+        let totalDays = 0;
+        for (let i = 0; i < sales.length - 1; i++) {
+            const daysDiff = Math.abs(sales[i].date - sales[i + 1].date) / (1000 * 60 * 60 * 24);
+            totalDays += daysDiff;
+        }
+        
+        const averageDaysBetweenPurchases = Math.round(totalDays / (sales.length - 1));
+        const lastPurchaseDate = new Date(sales[0].date);
+        const predictedNextPurchase = new Date(lastPurchaseDate);
+        predictedNextPurchase.setDate(predictedNextPurchase.getDate() + averageDaysBetweenPurchases);
+        
+        res.json({
+            clientId,
+            clientName: client.fullname,
+            lastPurchase: lastPurchaseDate,
+            averageDaysBetweenPurchases,
+            predictedNextPurchase,
+            daysUntilPrediction: Math.ceil((predictedNextPurchase - new Date()) / (1000 * 60 * 60 * 24))
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Cálculos de categorías
+exports.getCategoryPerformance = async (req, res) => {
+    try {
+        const { days = 30 } = req.query;
+        
+        const dateFrom = new Date();
+        dateFrom.setDate(dateFrom.getDate() - days);
+        
+        const categories = await Category.find();
+        const sales = await Sale.find({ date: { $gte: dateFrom } });
+        const products = await Product.find().populate('categoryId');
+        
+        const categoryStats = {};
+        
+        // Inicializar estadísticas por categoría
+        categories.forEach(category => {
+            categoryStats[category._id] = {
+                categoryId: category._id,
+                categoryName: category.name,
+                totalRevenue: 0,
+                quantitySold: 0,
+                productCount: 0,
+                averagePrice: 0
+            };
+        });
+        
+        // Contar productos por categoría
+        products.forEach(product => {
+            if (product.categoryId && categoryStats[product.categoryId._id]) {
+                categoryStats[product.categoryId._id].productCount++;
+            }
+        });
+        
+        // Calcular ventas por categoría
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                const product = products.find(p => p._id.toString() === item.productId.toString());
+                if (product && product.categoryId && categoryStats[product.categoryId._id]) {
+                    categoryStats[product.categoryId._id].totalRevenue += item.total;
+                    categoryStats[product.categoryId._id].quantitySold += item.quantity;
+                }
+            });
+        });
+        
+        // Calcular precio promedio
+        Object.values(categoryStats).forEach(category => {
+            if (category.quantitySold > 0) {
+                category.averagePrice = (category.totalRevenue / category.quantitySold).toFixed(2);
+            }
+        });
+        
+        const sortedCategories = Object.values(categoryStats)
+            .sort((a, b) => b.totalRevenue - a.totalRevenue);
+        
+        res.json({
+            period: `${days} días`,
+            categories: sortedCategories
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
