@@ -2104,3 +2104,181 @@ exports.getBusinessScenarioSimulation = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
+
+
+
+// Análisis de gap de precios
+exports.getPriceGapAnalysis = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        const categories = await Category.find();
+        
+        const categoryAnalysis = categories.map(category => {
+            const categoryProducts = products.filter(p => 
+                p.categoryId && p.categoryId._id.toString() === category._id.toString()
+            );
+            
+            if (categoryProducts.length === 0) {
+                return null;
+            }
+            
+            const prices = categoryProducts.map(p => p.salePrice).sort((a, b) => a - b);
+            const costs = categoryProducts.map(p => p.purchasePrice).sort((a, b) => a - b);
+            
+            // Análisis de gaps en precios
+            const priceGaps = [];
+            for (let i = 1; i < prices.length; i++) {
+                const gap = prices[i] - prices[i-1];
+                const gapPercentage = ((gap / prices[i-1]) * 100).toFixed(1);
+                
+                if (gap > prices[i-1] * 0.25) { // Gap mayor al 25%
+                    priceGaps.push({
+                        lowerPrice: prices[i-1],
+                        higherPrice: prices[i],
+                        gap,
+                        gapPercentage: gapPercentage + '%',
+                        opportunity: `Potencial producto en rango $${(prices[i-1] + gap/2).toFixed(2)}`
+                    });
+                }
+            }
+            
+            const stats = {
+                productCount: categoryProducts.length,
+                priceRange: {
+                    min: Math.min(...prices),
+                    max: Math.max(...prices),
+                    average: (prices.reduce((sum, p) => sum + p, 0) / prices.length).toFixed(2)
+                },
+                costRange: {
+                    min: Math.min(...costs),
+                    max: Math.max(...costs),
+                    average: (costs.reduce((sum, c) => sum + c, 0) / costs.length).toFixed(2)
+                },
+                gaps: priceGaps,
+                gapOpportunities: priceGaps.length
+            };
+            
+            return {
+                categoryId: category._id,
+                categoryName: category.name,
+                ...stats
+            };
+        }).filter(analysis => analysis !== null);
+        
+        res.json({
+            totalCategories: categoryAnalysis.length,
+            categories: categoryAnalysis.sort((a, b) => b.gapOpportunities - a.gapOpportunities),
+            summary: {
+                totalGapOpportunities: categoryAnalysis.reduce((sum, cat) => sum + cat.gapOpportunities, 0),
+                categoriesWithGaps: categoryAnalysis.filter(cat => cat.gapOpportunities > 0).length,
+                recommendations: categoryAnalysis
+                    .filter(cat => cat.gapOpportunities > 0)
+                    .slice(0, 3)
+                    .map(cat => ({
+                        category: cat.categoryName,
+                        suggestion: `Considerar ${cat.gapOpportunities} nuevos productos en rangos de precio identificados`
+                    }))
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Análisis de dispersión de precios
+exports.getPriceDispersionAnalysis = async (req, res) => {
+    try {
+        const products = await Product.find().populate('categoryId');
+        
+        const overallPrices = products.map(p => p.salePrice);
+        const overallCosts = products.map(p => p.purchasePrice);
+        
+        // Cálculos estadísticos generales
+        const priceStats = {
+            mean: (overallPrices.reduce((sum, p) => sum + p, 0) / overallPrices.length).toFixed(2),
+            median: calculateMedian(overallPrices).toFixed(2),
+            standardDeviation: calculateStandardDeviation(overallPrices).toFixed(2),
+            variance: calculateVariance(overallPrices).toFixed(2),
+            range: {
+                min: Math.min(...overallPrices),
+                max: Math.max(...overallPrices),
+                spread: (Math.max(...overallPrices) - Math.min(...overallPrices)).toFixed(2)
+            }
+        };
+        
+        // Análisis por categoría
+        const categoryDispersion = {};
+        products.forEach(product => {
+            const categoryName = product.categoryId?.name || 'Sin categoría';
+            
+            if (!categoryDispersion[categoryName]) {
+                categoryDispersion[categoryName] = {
+                    prices: [],
+                    margins: []
+                };
+            }
+            
+            categoryDispersion[categoryName].prices.push(product.salePrice);
+            const margin = ((product.salePrice - product.purchasePrice) / product.purchasePrice) * 100;
+            categoryDispersion[categoryName].margins.push(margin);
+        });
+        
+        const categoryAnalysis = Object.keys(categoryDispersion).map(categoryName => {
+            const prices = categoryDispersion[categoryName].prices;
+            const margins = categoryDispersion[categoryName].margins;
+            
+            return {
+                category: categoryName,
+                priceStats: {
+                    mean: (prices.reduce((sum, p) => sum + p, 0) / prices.length).toFixed(2),
+                    standardDeviation: calculateStandardDeviation(prices).toFixed(2),
+                    coefficientOfVariation: (calculateStandardDeviation(prices) / (prices.reduce((sum, p) => sum + p, 0) / prices.length) * 100).toFixed(2) + '%'
+                },
+                marginStats: {
+                    mean: (margins.reduce((sum, m) => sum + m, 0) / margins.length).toFixed(2) + '%',
+                    standardDeviation: calculateStandardDeviation(margins).toFixed(2),
+                    consistency: calculateStandardDeviation(margins) < 10 ? 'Alta' : 
+                                calculateStandardDeviation(margins) < 20 ? 'Media' : 'Baja'
+                },
+                productCount: prices.length
+            };
+        });
+        
+        // Funciones auxiliares
+        function calculateMedian(values) {
+            const sorted = [...values].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        }
+        
+        function calculateStandardDeviation(values) {
+            const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+            const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+            return Math.sqrt(variance);
+        }
+        
+        function calculateVariance(values) {
+            const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+            return values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+        }
+        
+        res.json({
+            totalProducts: products.length,
+            overallPriceStats: priceStats,
+            categoryAnalysis: categoryAnalysis.sort((a, b) => parseFloat(b.priceStats.mean) - parseFloat(a.priceStats.mean)),
+            insights: {
+                mostConsistentCategory: categoryAnalysis.reduce((best, cat) => 
+                    cat.marginStats.consistency === 'Alta' && parseFloat(cat.priceStats.standardDeviation) < parseFloat(best.priceStats.standardDeviation) ? cat : best
+                ),
+                mostVariableCategory: categoryAnalysis.reduce((worst, cat) => 
+                    parseFloat(cat.priceStats.standardDeviation) > parseFloat(worst.priceStats.standardDeviation) ? cat : worst
+                )
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
