@@ -27,3 +27,51 @@ exports.calculateProductProfit = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+exports.calculateInventoryValue = async (req, res) => {
+    try {
+        const products = await Product.find();
+        let totalPurchaseValue = 0;
+        let totalSaleValue = 0;
+        
+        products.forEach(product => {
+            totalPurchaseValue += product.purchasePrice * product.stock;
+            totalSaleValue += product.salePrice * product.stock;
+        });
+        
+        const potentialProfit = totalSaleValue - totalPurchaseValue;
+        
+        res.json({
+            totalProducts: products.length,
+            totalPurchaseValue,
+            totalSaleValue,
+            potentialProfit,
+            profitMargin: ((potentialProfit / totalPurchaseValue) * 100).toFixed(2) + '%'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+exports.getLowStockProducts = async (req, res) => {
+    try {
+        const { threshold = 10 } = req.query;
+        const products = await Product.find({ stock: { $lte: threshold } }).populate('categoryId');
+        
+        const lowStockData = products.map(product => ({
+            id: product._id,
+            name: product.name,
+            category: product.categoryId?.name,
+            currentStock: product.stock,
+            threshold,
+            restockValue: product.purchasePrice * (threshold - product.stock + 10)
+        }));
+        
+        res.json({
+            threshold,
+            count: lowStockData.length,
+            products: lowStockData,
+            totalRestockValue: lowStockData.reduce((sum, p) => sum + p.restockValue, 0)
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
