@@ -2504,3 +2504,151 @@ exports.getPriceElasticityAnalysis = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+   
+
+
+
+
+
+// Análisis de crecimiento y tendencias
+exports.getGrowthTrendAnalysis = async (req, res) => {
+    try {
+        const { period = 'monthly', duration = 12 } = req.query;
+        
+        const now = new Date();
+        const startDate = new Date();
+        
+        if (period === 'monthly') {
+            startDate.setMonth(startDate.getMonth() - parseInt(duration));
+        } else if (period === 'weekly') {
+            startDate.setDate(startDate.getDate() - (parseInt(duration) * 7));
+        } else if (period === 'daily') {
+            startDate.setDate(startDate.getDate() - parseInt(duration));
+        }
+        
+        const sales = await Sale.find({ date: { $gte: startDate, $lte: now } }).sort({ date: 1 });
+        const products = await Product.find();
+        const clients = await Client.find();
+        
+        // Agrupar datos por período
+        const groupedData = {};
+        sales.forEach(sale => {
+            let periodKey;
+            
+            if (period === 'monthly') {
+                periodKey = `${sale.date.getFullYear()}-${String(sale.date.getMonth() + 1).padStart(2, '0')}`;
+            } else if (period === 'weekly') {
+                const weekNumber = Math.ceil((sale.date - startDate) / (7 * 24 * 60 * 60 * 1000));
+                periodKey = `Semana ${weekNumber}`;
+            } else {
+                periodKey = sale.date.toISOString().split('T')[0];
+            }
+            
+            if (!groupedData[periodKey]) {
+                groupedData[periodKey] = {
+                    period: periodKey,
+                    totalSales: 0,
+                    totalRevenue: 0,
+                    uniqueCustomers: new Set(),
+                    productsSold: {},
+                    transactionCount: 0
+                };
+            }
+            
+            const periodData = groupedData[periodKey];
+            periodData.totalRevenue += sale.total;
+            periodData.transactionCount += 1;
+            periodData.uniqueCustomers.add(sale.clientId.toString());
+            
+            sale.items.forEach(item => {
+                periodData.totalSales += item.quantity;
+                periodData.productsSold[item.productId] = (periodData.productsSold[item.productId] || 0) + item.quantity;
+            });
+        });
+        
+        // Convertir Set a número
+        Object.values(groupedData).forEach(data => {
+            data.uniqueCustomers = data.uniqueCustomers.size;
+        });
+        
+        const periodArray = Object.values(groupedData).sort((a, b) => a.period.localeCompare(b.period));
+        
+        // Calcular tasas de crecimiento
+        const growthAnalysis = periodArray.map((current, index) => {
+            if (index === 0) {
+                return {
+                    ...current,
+                    revenueGrowth: '0%',
+                    customerGrowth: '0%',
+                    salesGrowth: '0%'
+                };
+            }
+            
+            const previous = periodArray[index - 1];
+            const revenueGrowth = previous.totalRevenue > 0 ? 
+                (((current.totalRevenue - previous.totalRevenue) / previous.totalRevenue) * 100).toFixed(2) : 0;
+            const customerGrowth = previous.uniqueCustomers > 0 ? 
+                (((current.uniqueCustomers - previous.uniqueCustomers) / previous.uniqueCustomers) * 100).toFixed(2) : 0;
+            const salesGrowth = previous.totalSales > 0 ? 
+                (((current.totalSales - previous.totalSales) / previous.totalSales) * 100).toFixed(2) : 0;
+            
+            return {
+                ...current,
+                revenueGrowth: revenueGrowth + '%',
+                customerGrowth: customerGrowth + '%',
+                salesGrowth: salesGrowth + '%'
+            };
+        });
+        
+        // Calcular tendencias generales
+        const totalRevenues = growthAnalysis.map(p => p.totalRevenue);
+        const avgGrowthRate = growthAnalysis.slice(1).reduce((sum, period) => {
+            return sum + parseFloat(period.revenueGrowth);
+        }, 0) / (growthAnalysis.length - 1);
+        
+        // Proyección simple para el siguiente período
+        const lastPeriod = growthAnalysis[growthAnalysis.length - 1];
+        const projectedRevenue = lastPeriod.totalRevenue * (1 + avgGrowthRate / 100);
+        
+        res.json({
+            period,
+            duration: parseInt(duration),
+            periodsAnalyzed: growthAnalysis.length,
+            analysis: growthAnalysis,
+            trends: {
+                averageGrowthRate: avgGrowthRate.toFixed(2) + '%',
+                trendDirection: avgGrowthRate > 5 ? 'Crecimiento fuerte' : 
+                               avgGrowthRate > 0 ? 'Crecimiento moderado' : 
+                               avgGrowthRate > -5 ? 'Estable' : 'Declinación',
+                volatility: calculateVolatility(totalRevenues),
+                consistency: calculateConsistency(growthAnalysis.slice(1).map(p => parseFloat(p.revenueGrowth)))
+            },
+            projection: {
+                nextPeriodRevenue: projectedRevenue.toFixed(2),
+                confidence: avgGrowthRate > -10 && avgGrowthRate < 50 ? 'Media' : 'Baja',
+                recommendation: avgGrowthRate > 0 ? 'Mantener estrategia actual' : 'Revisar estrategia de ventas'
+            }
+        });
+        
+        function calculateVolatility(values) {
+            if (values.length < 2) return 0;
+            const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+            const variance = values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length;
+            const stdDev = Math.sqrt(variance);
+            return mean > 0 ? ((stdDev / mean) * 100).toFixed(2) + '%' : '0%';
+        }
+        
+        function calculateConsistency(growthRates) {
+            if (growthRates.length < 2) return 'Insuficiente';
+            const positiveGrowths = growthRates.filter(rate => rate > 0).length;
+            const consistencyRatio = positiveGrowths / growthRates.length;
+            
+            if (consistencyRatio >= 0.8) return 'Alta';
+            if (consistencyRatio >= 0.6) return 'Media';
+            return 'Baja';
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
